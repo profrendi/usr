@@ -1,0 +1,25 @@
+[package]
+name = "pwakun"
+version = "0.1.0"
+edition = "2021"
+description = "Pengatur akun Windows: hapus password & tanpa expired (ringan, native Win32)"
+
+[dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_NetworkManagement_NetManagement",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Controls",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+embed-resource = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

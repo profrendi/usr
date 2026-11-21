@@ -1,0 +1,70 @@
+name: build-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Cek DLL yang dibutuhkan exe
+        shell: pwsh
+        run: |
+          python -m pip install --quiet pefile
+          @'
+          import pefile, sys
+          pe = pefile.PE("target/release/pwakun.exe")
+          dlls = sorted({e.dll.decode().lower() for e in pe.DIRECTORY_ENTRY_IMPORT})
+          print("Import DLL:", ", ".join(dlls))
+          bad = [d for d in dlls if d.startswith(("vcruntime", "msvcp", "ucrtbase", "api-ms-win-crt"))]
+          if bad:
+              sys.exit("DLL runtime VC++ dibutuhkan: " + ", ".join(bad))
+          '@ | Set-Content check_imports.py
+          python check_imports.py
+
+      - name: Kemas
+        shell: pwsh
+        run: |
+          $ver = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          "PWAKUN_VERSION=$ver" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/pwakun.exe dist/PwAkun.exe
+          $hash = (Get-FileHash dist/PwAkun.exe -Algorithm SHA256).Hash.ToLower()
+          $url = "https://github.com/${{ github.repository }}/releases/download/v$ver/PwAkun.exe"
+          [ordered]@{ version = $ver; url = $url; sha256 = $hash } |
+            ConvertTo-Json | Set-Content -Encoding utf8NoBOM dist/latest.json
+          Get-Content dist/latest.json
+          Get-ChildItem dist | ForEach-Object { "{0,-16} {1,10:N0} KB" -f $_.Name, ($_.Length / 1KB) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pwakun-windows
+          path: dist/*
+
+      - name: Rilis otomatis
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:PWAKUN_VERSION"
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "Rilis $tag sudah ada, dilewati. Naikkan versi di Cargo.toml untuk rilis baru."
+          } else {
+            gh release create $tag dist/PwAkun.exe dist/latest.json `
+              --repo "${{ github.repository }}" `
+              --title "PwAkun $env:PWAKUN_VERSION" `
+              --notes "Unduh PwAkun.exe lalu jalankan (Windows meminta izin Administrator). Aplikasi akan update sendiri bila ada versi baru." `
+              --latest
+          }
